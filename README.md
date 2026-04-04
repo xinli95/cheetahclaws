@@ -27,6 +27,7 @@ English | [中文](https://github.com/SafeRL-Lab/nano-claude-code/blob/main/docs
 ---
 
 ## 🔥🔥🔥 News (Pacific Time)
+- 01:00 AM, Apr 04, 2026: **v3.05_fix** — Autosave + `/resume`: session is automatically saved to `mr_sessions/session_latest.json` on `/exit`, `/quit`, `Ctrl+C`, and `Ctrl+D`. Run `/resume` to restore the last session instantly, or `/resume <file>` to load a specific file from `mr_sessions/`.
 - 00:41 AM, Apr 04, 2026: **v3.05** — Voice input (`voice/` package): `sounddevice` → `arecord` → SoX recording backends, `faster-whisper` → `openai-whisper` → OpenAI API STT backends. Smart keyterm extraction from git branch + project name + recent files passed as Whisper `initial_prompt` for coding-domain accuracy. `/voice`, `/voice status`, `/voice lang <code>` REPL commands. Works fully offline with no API key. 29 new tests (**~11.6K** lines of Python).
 - 10:29 PM, Apr 03, 2026: **v3.04** — Expanded tool coverage: `NotebookEdit` (edit Jupyter `.ipynb` cells — replace/insert/delete with full JSON round-trip) and `GetDiagnostics` (LSP-style diagnostics via pyright/mypy/flake8/tsc/shellcheck). Also fixed a pre-existing schema-index bug in `_register_builtins` by switching to name-based lookup (**~10.5K** lines of Python).
 - 06:00 PM, Apr 03, 2026: **v3.03** — Task management system (`task/` package): `TaskCreate` / `TaskUpdate` / `TaskGet` / `TaskList` tools with sequential IDs, dependency edges (blocks/blocked_by), metadata, persistence to `.nano_claude/tasks.json`, thread-safe store, `/tasks` REPL command, 37 new tests (**~9500** lines of Python).
@@ -169,7 +170,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | 18 slash commands | `/model` · `/config` · `/save` · `/cost` · `/memory` · `/skills` · `/agents` · `/voice` · … |
 | Voice input | Record → transcribe → auto-submit. Backends: `sounddevice` / `arecord` / SoX + `faster-whisper` / `openai-whisper` / OpenAI API. Works fully offline. |
 | Context injection | Auto-loads `CLAUDE.md`, git status, cwd, persistent memory |
-| Session persistence | Save / load conversations to `~/.nano_claude/sessions/` |
+| Session persistence | Save / load conversations to `~/.nano_claude/sessions/`; **autosave on exit** + `/resume` to instantly restore last session |
 | Extended Thinking | Toggle on/off (Claude models only) |
 | Cost tracking | Token usage + estimated USD cost |
 | Non-interactive mode | `--print` flag for scripting / CI |
@@ -564,6 +565,8 @@ Type `/` and press **Tab** to autocomplete.
 | `/save <filename>` | Save session to named file |
 | `/load` | List all saved sessions |
 | `/load <filename>` | Load a saved session |
+| `/resume` | Restore the last auto-saved session (`mr_sessions/session_latest.json`) |
+| `/resume <filename>` | Load a specific file from `mr_sessions/` (or absolute path) |
 | `/history` | Print full conversation history |
 | `/context` | Show message count and token estimate |
 | `/cost` | Show token usage and estimated USD cost |
@@ -1301,6 +1304,8 @@ Place a `CLAUDE.md` file in your project to give the model persistent context ab
 
 ## Session Management
 
+### Manual save / load
+
 ```bash
 # Inside REPL:
 /save                          # auto-name: session_20260401_143022.json
@@ -1312,6 +1317,29 @@ Place a `CLAUDE.md` file in your project to give the model persistent context ab
 ```
 
 Sessions are stored as JSON in `~/.nano_claude/sessions/`.
+
+### Autosave + resume (v3.05_fix)
+
+Every time you exit — via `/exit`, `/quit`, `Ctrl+C`, or `Ctrl+D` — the current session is automatically saved to:
+
+```
+~/.nano_claude/sessions/mr_sessions/session_latest.json
+```
+
+To continue where you left off, simply run `/resume` at the start of the next session:
+
+```bash
+python nano_claude.py
+[myproject] ❯ /resume
+✓  Session loaded from …/mr_sessions/session_latest.json (42 messages)
+```
+
+You can also resume a specific file:
+
+```bash
+/resume session_latest.json          # loads from mr_sessions/
+/resume /absolute/path/to/file.json  # loads from absolute path
+```
 
 ---
 
