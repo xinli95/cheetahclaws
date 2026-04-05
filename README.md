@@ -29,6 +29,7 @@ English | [中文](https://github.com/SafeRL-Lab/nano-claude-code/blob/main/docs
 
 
 ## 🔥🔥🔥 News (Pacific Time)
+- Apr 05, 2026: **uv support** — added `pyproject.toml`; install with `uv tool install .` to get the `nano_claude` command available globally from anywhere (isolated environment, no PATH hacks needed).
 - 00:41 PM, Apr 05, 2026: **v3.05.4** — Structured session history: on every exit, sessions are saved to `daily/YYYY-MM-DD/` (capped at `session_daily_limit`, default 5 per day) and appended to a master `history.json` (capped at `session_history_limit`, default 100). Each session file now includes `session_id` and `saved_at` metadata. `/load` groups sessions by date with time, ID, and turn-count display; supports multi-select (`1,2,3`) to merge sessions and `H` to load the full history with token-count confirmation. Both limits are configurable via `/config`.
 - 09:34 AM, Apr 05, 2026: **v3.05.3** — Added GitHub Gist cloud sync: `/cloudsave setup <token>` to configure, `/cloudsave` to upload the current session to a private Gist, `/cloudsave auto on` to sync automatically on `/exit`, `/cloudsave list` to browse cloud sessions, and `/cloudsave load <id>` to restore from the cloud. Uses stdlib `urllib` — no new dependencies. Also added version number (e.g., `v3.05.2`) in the startup banner: The startup banner now displays the current version number (v3.05.2) in green, making it easy to identify which version is running at a glance.
 - 08:58 AM, Apr 05, 2026: **v3.05.2** — Introduced `/proactive [duration]` command: a background daemon thread watches for user inactivity and automatically wakes the agent up after the specified interval (e.g. `/proactive 5m`), enabling continuous monitoring loops without user intervention. `/proactive` with no args now shows current status; `/proactive off` disables it explicitly. Proactive polling state is stored in `config` (no module-level globals). Watcher exceptions are logged via `traceback` instead of silently swallowed. Also fixed duplicated output in Rich-enabled terminals by buffering text during streaming and rendering Markdown once via `rich.live.Live` — updates happen in-place for a true streaming Markdown experience. 
@@ -107,7 +108,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | Voice input | Proprietary Anthropic WebSocket (OAuth required) | Local Whisper / OpenAI API — works offline, no subscription |
 | Model providers | Anthropic only | 7+ (Anthropic · OpenAI · Gemini · Kimi · Qwen · DeepSeek · Ollama · …) |
 | Local models | No | Yes — Ollama, LM Studio, vLLM, any OpenAI-compatible endpoint |
-| Build step required | Yes (Bun + esbuild) | No — run directly with `python nano_claude.py` |
+| Build step required | Yes (Bun + esbuild) | No — run directly with `nano_claude` |
 | Runtime extensibility | Closed (compile-time) | Open — `register_tool()` at runtime, Markdown skills, git plugins |
 | Task dependency graph | No | Yes — `blocks` / `blocked_by` edges in `task/` package |
 
@@ -244,13 +245,51 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 
 ## Installation
 
+### Recommended: install as a global command with `uv`
+
+[uv](https://docs.astral.sh/uv/) installs `nano_claude` into an isolated environment and puts it on your PATH so you can run it from anywhere:
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and install
+git clone <repo-url>
+cd nano-claude-code
+uv tool install .
+```
+
+After that, `nano_claude` is available as a global command:
+
+```bash
+nano_claude                        # start REPL
+nano_claude --model gpt-4o         # choose a model
+nano_claude -p "explain this"      # non-interactive
+```
+
+To update after pulling new code:
+
+```bash
+uv tool install . --reinstall
+```
+
+To uninstall:
+
+```bash
+uv tool uninstall nano-claude-code
+```
+
+### Alternative: run directly from the repo
+
 ```bash
 git clone <repo-url>
-cd nano_claude_code
+cd nano-claude-code
 
 pip install -r requirements.txt
 # or manually:
 pip install anthropic openai httpx rich sounddevice
+
+python nano_claude.py
 ```
 
 ---
@@ -265,14 +304,14 @@ Get your API key at [console.anthropic.com](https://console.anthropic.com).
 export ANTHROPIC_API_KEY=sk-ant-api03-...
 
 # Default model (claude-opus-4-6)
-python nano_claude.py
+nano_claude
 
 # Choose a specific model
-python nano_claude.py --model claude-sonnet-4-6
-python nano_claude.py --model claude-haiku-4-5-20251001
+nano_claude --model claude-sonnet-4-6
+nano_claude --model claude-haiku-4-5-20251001
 
 # Enable Extended Thinking
-python nano_claude.py --model claude-opus-4-6 --thinking --verbose
+nano_claude --model claude-opus-4-6 --thinking --verbose
 ```
 
 ### OpenAI GPT
@@ -282,10 +321,10 @@ Get your API key at [platform.openai.com](https://platform.openai.com).
 ```bash
 export OPENAI_API_KEY=sk-...
 
-python nano_claude.py --model gpt-4o
-python nano_claude.py --model gpt-4o-mini
-python nano_claude.py --model gpt-4.1-mini
-python nano_claude.py --model o3-mini
+nano_claude --model gpt-4o
+nano_claude --model gpt-4o-mini
+nano_claude --model gpt-4.1-mini
+nano_claude --model o3-mini
 ```
 
 ### Google Gemini
@@ -295,9 +334,9 @@ Get your API key at [aistudio.google.com](https://aistudio.google.com).
 ```bash
 export GEMINI_API_KEY=AIza...
 
-python nano_claude.py --model gemini/gemini-2.0-flash
-python nano_claude.py --model gemini/gemini-1.5-pro
-python nano_claude.py --model gemini/gemini-2.5-pro-preview-03-25
+nano_claude --model gemini/gemini-2.0-flash
+nano_claude --model gemini/gemini-1.5-pro
+nano_claude --model gemini/gemini-2.5-pro-preview-03-25
 ```
 
 ### Kimi (Moonshot AI)
@@ -307,8 +346,8 @@ Get your API key at [platform.moonshot.cn](https://platform.moonshot.cn).
 ```bash
 export MOONSHOT_API_KEY=sk-...
 
-python nano_claude.py --model kimi/moonshot-v1-32k
-python nano_claude.py --model kimi/moonshot-v1-128k
+nano_claude --model kimi/moonshot-v1-32k
+nano_claude --model kimi/moonshot-v1-128k
 ```
 
 ### Qwen (Alibaba DashScope)
@@ -318,9 +357,9 @@ Get your API key at [dashscope.aliyun.com](https://dashscope.aliyun.com).
 ```bash
 export DASHSCOPE_API_KEY=sk-...
 
-python nano_claude.py --model qwen/Qwen3.5-Plus
-python nano_claude.py --model qwen/Qwen3-MAX
-python nano_claude.py --model qwen/Qwen3.5-Flash
+nano_claude --model qwen/Qwen3.5-Plus
+nano_claude --model qwen/Qwen3-MAX
+nano_claude --model qwen/Qwen3.5-Flash
 ```
 
 ### Zhipu GLM
@@ -330,8 +369,8 @@ Get your API key at [open.bigmodel.cn](https://open.bigmodel.cn).
 ```bash
 export ZHIPU_API_KEY=...
 
-python nano_claude.py --model zhipu/glm-4-plus
-python nano_claude.py --model zhipu/glm-4-flash   # free tier
+nano_claude --model zhipu/glm-4-plus
+nano_claude --model zhipu/glm-4-flash   # free tier
 ```
 
 ### DeepSeek
@@ -341,8 +380,8 @@ Get your API key at [platform.deepseek.com](https://platform.deepseek.com).
 ```bash
 export DEEPSEEK_API_KEY=sk-...
 
-python nano_claude.py --model deepseek/deepseek-chat
-python nano_claude.py --model deepseek/deepseek-reasoner
+nano_claude --model deepseek/deepseek-chat
+nano_claude --model deepseek/deepseek-reasoner
 ```
 
 ---
@@ -391,9 +430,9 @@ ollama serve     # starts on http://localhost:11434
 **Step 4: Run nano claude**
 
 ```bash
-python nano_claude.py --model ollama/qwen2.5-coder
-python nano_claude.py --model ollama/llama3.3
-python nano_claude.py --model ollama/deepseek-r1
+nano_claude --model ollama/qwen2.5-coder
+nano_claude --model ollama/llama3.3
+nano_claude --model ollama/deepseek-r1
 ```
 
 **List your locally available models:**
@@ -405,7 +444,7 @@ ollama list
 Then use any model from the list:
 
 ```bash
-python nano_claude.py --model ollama/<model-name>
+nano_claude --model ollama/<model-name>
 ```
 
 ---
@@ -423,10 +462,10 @@ LM Studio provides a GUI to download and run models, with a built-in OpenAI-comp
 **Step 4:**
 
 ```bash
-python nano_claude.py --model lmstudio/<model-name>
+nano_claude --model lmstudio/<model-name>
 # e.g.:
-python nano_claude.py --model lmstudio/phi-4-GGUF
-python nano_claude.py --model lmstudio/qwen2.5-coder-7b
+nano_claude --model lmstudio/phi-4-GGUF
+nano_claude --model lmstudio/qwen2.5-coder-7b
 ```
 
 The model name should match what LM Studio shows in the server status bar.
@@ -453,7 +492,7 @@ CUDA_VISIBLE_DEVICES=7 python -m vllm.entrypoints.openai.api_server \
 ```
   export CUSTOM_BASE_URL=http://localhost:8000/v1
   export CUSTOM_API_KEY=none
-  python nano_claude.py --model custom/Qwen/Qwen2.5-Coder-7B-Instruct
+  nano_claude --model custom/Qwen/Qwen2.5-Coder-7B-Instruct
 ```
 
 
@@ -464,7 +503,7 @@ python -m vllm.entrypoints.openai.api_server \
     --port 8000
 
 # Then run nano claude pointing to your server:
-python nano_claude.py
+nano_claude
 ```
 
 Inside the REPL:
@@ -481,7 +520,7 @@ Or set via environment:
 export CUSTOM_BASE_URL=http://localhost:8000/v1
 export CUSTOM_API_KEY=token-abc123
 
-python nano_claude.py --model custom/Qwen2.5-Coder-32B-Instruct
+nano_claude --model custom/Qwen2.5-Coder-32B-Instruct
 ```
 
 For a remote GPU server:
@@ -499,17 +538,17 @@ Three equivalent formats are supported:
 
 ```bash
 # 1. Auto-detect by prefix (works for well-known models)
-python nano_claude.py --model gpt-4o
-python nano_claude.py --model gemini-2.0-flash
-python nano_claude.py --model deepseek-chat
+nano_claude --model gpt-4o
+nano_claude --model gemini-2.0-flash
+nano_claude --model deepseek-chat
 
 # 2. Explicit provider prefix with slash
-python nano_claude.py --model ollama/qwen2.5-coder
-python nano_claude.py --model kimi/moonshot-v1-128k
+nano_claude --model ollama/qwen2.5-coder
+nano_claude --model kimi/moonshot-v1-128k
 
 # 3. Explicit provider prefix with colon (also works)
-python nano_claude.py --model kimi:moonshot-v1-32k
-python nano_claude.py --model qwen:qwen-max
+nano_claude --model kimi:moonshot-v1-32k
+nano_claude --model qwen:qwen-max
 ```
 
 **Auto-detection rules:**
@@ -530,7 +569,8 @@ python nano_claude.py --model qwen:qwen-max
 ## CLI Reference
 
 ```
-python nano_claude.py [OPTIONS] [PROMPT]
+nano_claude [OPTIONS] [PROMPT]
+# or: python nano_claude.py [OPTIONS] [PROMPT]
 
 Options:
   -p, --print          Non-interactive: run prompt and exit
@@ -546,21 +586,21 @@ Options:
 
 ```bash
 # Interactive REPL with default model
-python nano_claude.py
+nano_claude
 
 # Switch model at startup
-python nano_claude.py --model gpt-4o
-python nano_claude.py -m ollama/deepseek-r1:32b
+nano_claude --model gpt-4o
+nano_claude -m ollama/deepseek-r1:32b
 
 # Non-interactive / scripting
-python nano_claude.py --print "Write a Python fibonacci function"
-python nano_claude.py -p "Explain the Rust borrow checker in 3 sentences" -m gemini/gemini-2.0-flash
+nano_claude --print "Write a Python fibonacci function"
+nano_claude -p "Explain the Rust borrow checker in 3 sentences" -m gemini/gemini-2.0-flash
 
 # CI / automation (no permission prompts)
-python nano_claude.py --accept-all --print "Initialize a Python project with pyproject.toml"
+nano_claude --accept-all --print "Initialize a Python project with pyproject.toml"
 
 # Debug mode (see tokens + thinking)
-python nano_claude.py --thinking --verbose
+nano_claude --thinking --verbose
 ```
 
 ---
@@ -1208,7 +1248,7 @@ pip install sounddevice        # recommended: cross-platform, no extra binary
 pip install faster-whisper numpy
 
 # 3. Start Nano Claude Code and speak
-python nano_claude.py
+nano_claude
 [myproject] ❯ /voice
   🎙  Listening… (speak now, auto-stops on silence, Ctrl+C to cancel)
   🎙  ████
@@ -1430,7 +1470,7 @@ Every time you exit — via `/exit`, `/quit`, `Ctrl+C`, or `Ctrl+D` — the sess
 To continue where you left off:
 
 ```bash
-python nano_claude.py
+nano_claude
 [myproject] ❯ /resume
 ✓  Session loaded from …/mr_sessions/session_latest.json (42 messages)
 ```
@@ -1697,7 +1737,7 @@ Not all models support function calling. Use one of the recommended tool-calling
 
 ```bash
 ollama pull qwen2.5-coder
-python nano_claude.py --model ollama/qwen2.5-coder
+nano_claude --model ollama/qwen2.5-coder
 ```
 
 **Q: How do I connect to a remote GPU server running vLLM?**
@@ -1737,19 +1777,20 @@ Ensure your `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY` is correct and the account has
 **Q: Can I pipe input to nano claude?**
 
 ```bash
-echo "Explain this file" | python nano_claude.py --print --accept-all
-cat error.log | python nano_claude.py -p "What is causing this error?"
+echo "Explain this file" | nano_claude --print --accept-all
+cat error.log | nano_claude -p "What is causing this error?"
 ```
 
 **Q: How do I run it as a CLI tool from anywhere?**
 
-```bash
-# Add an alias to ~/.bashrc or ~/.zshrc
-alias nc='python /path/to/nano_claude_code/nano_claude.py'
+Use `uv tool install` — it creates an isolated environment and puts `nano_claude` on your PATH:
 
-# Or install as a script
-pip install -e .   # if setup.py exists
+```bash
+cd nano-claude-code
+uv tool install .
 ```
+
+After that, just run `nano_claude` from any directory. To update after pulling changes, run `uv tool install . --reinstall`.
 
 **Q: How do I set up voice input?**
 
