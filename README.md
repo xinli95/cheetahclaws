@@ -31,7 +31,7 @@ English | [中文](https://github.com/SafeRL-Lab/nano-claude-code/blob/main/docs
 ## 🔥🔥🔥 News (Pacific Time)
 
 
-- 05:39 PM, Apr 05, 2026 (**v3.05.5**): **Reasoning, Rendering, and Packaging Improvements, Enhanced Memory System, Native vision support for local Ollama models, Bracketed Paste Mode, Rich Tab Completion**
+- 03:43 PM, Apr 05, 2026 (**v3.05.5**): **Reasoning, Rendering, and Packaging Improvements, Enhanced Memory System, Native vision support for local Ollama models, Bracketed Paste Mode, Rich Tab Completion**
   - **Bracketed Paste Mode** — replaced the old timing-based multi-line paste detection with the standard terminal Bracketed Paste Mode protocol (`ESC[?2004h`). Pasted text of any length (code blocks, long prompts, multi-paragraph instructions) is now collected as a single turn with zero latency and no blank-line artifacts. Falls back to a 60 ms timing window for terminals that don't support BPM. Bracketed paste mode is cleanly disabled on REPL exit.
   - **Rich Tab Completion with descriptions** — pressing Tab after `/` now shows every command with a one-line description and a hint of its subcommands. Typing `/plugin ` then Tab lists all subcommands (`install`, `uninstall`, `enable`, …). Auto-completes to the unique match when only one command matches the prefix. Subcommands supported for `/mcp`, `/plugin`, `/tasks`, `/cloudsave`, `/voice`, `/permissions`, `/proactive`, and `/memory`.
   - **Model name bug fix** — `--model ollama/qwen3.5:35b` no longer gets corrupted to `ollama/qwen3.5/35b`. The startup colon-to-slash conversion now only fires when the left side of `:` is a known provider name and no `/` is already present, preserving Ollama's `model:tag` format.
@@ -454,6 +454,15 @@ ollama serve     # starts on http://localhost:11434
 nano_claude --model ollama/qwen2.5-coder
 nano_claude --model ollama/llama3.3
 nano_claude --model ollama/deepseek-r1
+```
+
+Or
+
+```bash
+python nano_claude.py --model ollama/qwen2.5-coder
+python nano_claude.py --model ollama/llama3.3
+python nano_claude.py --model ollama/deepseek-r1
+python nano_claude.py --model ollama/qwen3.5:35b
 ```
 
 **List your locally available models:**
