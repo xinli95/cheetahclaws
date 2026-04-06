@@ -139,6 +139,7 @@ def _has_diff(text: str) -> bool:
 
 _accumulated_text: list[str] = []   # buffer text during streaming
 _current_live: "Live | None" = None  # active Rich Live instance (one at a time)
+_RICH_LIVE = True  # set to False (via config rich_live=false) to disable in-place Live streaming
 
 def _make_renderable(text: str):
     """Return a Rich renderable: Markdown if text contains markup, else plain."""
@@ -149,7 +150,7 @@ def _make_renderable(text: str):
 def _start_live() -> None:
     """Start a Rich Live block for in-place Markdown streaming (no-op if not Rich)."""
     global _current_live
-    if _RICH and _current_live is None:
+    if _RICH and _RICH_LIVE and _current_live is None:
         _current_live = Live(console=console, auto_refresh=False,
                              vertical_overflow="visible")
         _current_live.start()
@@ -158,7 +159,7 @@ def stream_text(chunk: str) -> None:
     """Buffer chunk; update Live in-place when Rich available, else print directly."""
     global _current_live
     _accumulated_text.append(chunk)
-    if _RICH:
+    if _RICH and _RICH_LIVE:
         if _current_live is None:
             _start_live()
         _current_live.update(_make_renderable("".join(_accumulated_text)), refresh=True)
@@ -182,7 +183,7 @@ def flush_response() -> None:
     if _current_live is not None:
         _current_live.stop()
         _current_live = None
-    elif _RICH and full.strip():
+    elif _RICH and _RICH_LIVE and full.strip():
         # Fallback: no Live was running but Rich is available (e.g. after thinking)
         console.print(_make_renderable(full))
     else:
@@ -318,6 +319,58 @@ def cmd_model(args: str, _state, config) -> bool:
         save_config(config)
     return True
 
+def _generate_personas(topic: str, curr_model: str, config: dict) -> dict | None:
+    """Ask the LLM to generate 5 topic-appropriate expert personas as a dict."""
+    from providers import stream, TextChunk
+    import json
+
+    user_msg = f"""Generate 5 expert personas for a multi-perspective brainstorming debate on: "{topic}"
+
+Return ONLY a valid JSON object — no markdown fences, no extra text — like this:
+{{
+  "p1": {{"icon": "🌍", "role": "Expert Title", "desc": "One sentence describing their analytical angle."}},
+  "p2": {{"icon": "💰", "role": "Expert Title", "desc": "One sentence describing their analytical angle."}},
+  "p3": {{"icon": "⚖️", "role": "Expert Title", "desc": "One sentence describing their analytical angle."}},
+  "p4": {{"icon": "🔬", "role": "Expert Title", "desc": "One sentence describing their analytical angle."}},
+  "p5": {{"icon": "📊", "role": "Expert Title", "desc": "One sentence describing their analytical angle."}}
+}}
+
+Choose experts whose domains are most relevant to analyzing "{topic}" from different angles."""
+
+    internal_config = config.copy()
+    internal_config["no_tools"] = True
+    chunks = []
+    try:
+        for event in stream(curr_model, "You are a debate facilitator. Return only valid JSON.", [{"role": "user", "content": user_msg}], [], internal_config):
+            if isinstance(event, TextChunk):
+                chunks.append(event.text)
+    except Exception:
+        return None
+
+    raw = "".join(chunks).strip()
+    # Strip markdown code fences if the model wraps in ```json ... ```
+    if "```" in raw:
+        for part in raw.split("```"):
+            part = part.strip().lstrip("json").strip()
+            try:
+                return json.loads(part)
+            except Exception:
+                continue
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+_TECH_PERSONAS = {
+    "architect":   {"icon": "🏗️", "role": "Principal Software Architect",       "desc": "Focus on modularity, clear boundaries, patterns, and long-term maintainability."},
+    "innovator":   {"icon": "💡", "role": "Pragmatic Product Innovator",          "desc": "Focus on bold, technically feasible ideas that add high user value and differentiation."},
+    "security":    {"icon": "🛡️", "role": "Security & Risk Engineer",            "desc": "Focus on vulnerabilities, data integrity, secrets handling, and project robustness."},
+    "refactor":    {"icon": "🔧", "role": "Senior Code Quality Lead",             "desc": "Focus on code smells, complexity reduction, DRY principles, and readability."},
+    "performance": {"icon": "⚡", "role": "Performance & Optimization Specialist","desc": "Focus on I/O bottlenecks, resource efficiency, latency, and scalability."},
+}
+
+
 def _interactive_ollama_picker(config: dict) -> bool:
     """Prompt the user to select from locally available Ollama models."""
     from providers import PROVIDERS, list_ollama_models
@@ -387,29 +440,14 @@ ROOT FILES:
 
 USER FOCUS: {user_topic}
 """
-    # ── Personas ──────────────────────────────────────────────────────────
-    personas = {
-        "architect": {
-            "role": "Principal Software Architect",
-            "desc": "Focus on modularity, clear boundaries, patterns, and long-term maintainability."
-        },
-        "innovator": {
-            "role": "Pragmatic Product Innovator",
-            "desc": "Focus on bold, technically feasible ideas that add high user value and differentiation."
-        },
-        "security": {
-            "role": "Security & Risk Engineer",
-            "desc": "Focus on vulnerabilities, data integrity, secrets handling, and project robustness."
-        },
-        "refactor": {
-            "role": "Senior Code Quality Lead",
-            "desc": "Focus on code smells, complexity reduction, DRY principles, and readability."
-        },
-        "performance": {
-            "role": "Performance & Optimization Specialist",
-            "desc": "Focus on I/O bottlenecks, resource efficiency, latency, and scalability."
-        }
-    }
+    curr_model = config["model"]
+
+    # ── Personas (dynamically generated per topic) ────────────────────────
+    info(clr("Generating topic-appropriate expert personas...", "dim"))
+    personas = _generate_personas(user_topic, curr_model, config)
+    if not personas:
+        info(clr("(persona generation failed, using default tech personas)", "dim"))
+        personas = _TECH_PERSONAS
     
     # ── Identity Generator ────────────────────────────────────────────────
     def get_identity(letter):
@@ -432,27 +470,28 @@ USER FOCUS: {user_topic}
     brainstorm_history = []
     
     ok(f"Starting Multi-Agent Brainstorming Session on: {clr(user_topic, 'bold')}")
-    info(clr("Generating diverse architectural perspectives...", "dim"))
-    
-    curr_model = config["model"]
+    info(clr("Generating diverse perspectives...", "dim"))
 
     # Helper function to call the model via the unified stream() function
     def call_persona(persona_name, p_data, history):
         letter, name = get_identity(persona_name[0].upper())
         # We wrap the persona instructions into a 'system' role
-        system_prompt = f"""You are {name}, the {p_data['role']}. Identity: Agente {letter}.
+        system_prompt = f"""You are {name}, the {p_data['role']}. Identity: Agent {letter}.
 {p_data['desc']}
 
-=== {snapshot} ===
+TOPIC UNDER DISCUSSION: {user_topic}
+
+PROJECT CONTEXT (if relevant to the topic):
+{snapshot}
 
 INSTRUCTIONS:
-1. Provide 3-5 concrete, actionable ideas based on your role.
-2. If there are prior ideas, analyze them briefly and build upon them or offer a different angle.
-3. Be specific, technical, and professional.
-4. Prefix each of your ideas with: [Agente {letter} — {name}]
+1. Provide 3-5 concrete, actionable insights or ideas from your expert perspective on the topic.
+2. If there are prior ideas from other agents, briefly acknowledge them and build upon or challenge them.
+3. Be specific, well-reasoned, and professional. Stay in character as your role.
+4. Prefix each of your points with: [Agent {letter} — {name}]
 5. Output your response in clean Markdown.
 """
-        user_msg = f"PRIOR IDEAS FROM DEBATE:\n{history or 'No previous ideas yet. You are the first to speak.'}"
+        user_msg = f"TOPIC: {user_topic}\n\nPRIOR IDEAS FROM DEBATE:\n{history or 'No previous ideas yet. You are the first to speak.'}"
         
         full_response = []
         # Internal calls should not include tools (tool_schemas already passed as [])
@@ -471,18 +510,16 @@ INSTRUCTIONS:
 
     full_log = [f"# Brainstorming Session: {user_topic}", f"**Date:** {time.strftime('%Y-%m-%d %H:%M:%S')}", f"**Model:** {curr_model}", "---"]
     
-    progress_icons = ["🏗️", "💡", "🛡️", "🔧", "⚡"]
-    for i, (p_name, p_data) in enumerate(personas.items()):
-        icon = progress_icons[i]
+    for p_name, p_data in personas.items():
+        icon = p_data.get("icon", "🤖")
         info(f"{icon} {clr(p_data['role'], 'yellow')} is thinking...")
-        
+
         hist_text = "\n\n".join(brainstorm_history) if brainstorm_history else ""
         content = call_persona(p_name, p_data, hist_text)
-        
+
         if content:
             brainstorm_history.append(content)
             full_log.append(f"## {icon} {p_data['role']}\n{content}")
-            # Horizontal feedback line
             print(clr("  └─ Perspective captured.", "dim"))
         else:
             err(f"  └─ Failed to capture {p_name} perspective.")
@@ -1855,7 +1892,16 @@ def repl(config: dict, initial_prompt: str = None):
         print()
 
     query_lock = threading.RLock()
-    
+
+    # Apply rich_live config: disable in-place Live streaming if terminal has issues.
+    # Auto-detect SSH sessions and dumb terminals where ANSI cursor-up doesn't work.
+    import os as _os
+    _in_ssh = bool(_os.environ.get("SSH_CLIENT") or _os.environ.get("SSH_TTY"))
+    _is_dumb = (console is not None and getattr(console, "is_dumb_terminal", False))
+    _rich_live_default = not _in_ssh and not _is_dumb
+    global _RICH_LIVE
+    _RICH_LIVE = _RICH and config.get("rich_live", _rich_live_default)
+
     # Initialize proactive polling state in config (avoids module-level globals)
     config.setdefault("_proactive_enabled", False)
     config.setdefault("_proactive_interval", 300)

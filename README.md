@@ -204,7 +204,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | Permission system | `auto` / `accept-all` / `manual` modes |
 | 19 slash commands | `/model` · `/config` · `/save` · `/cost` · `/memory` · `/skills` · `/agents` · `/voice` · `/proactive` · … |
 | Voice input | Record → transcribe → auto-submit. Backends: `sounddevice` / `arecord` / SoX + `faster-whisper` / `openai-whisper` / OpenAI API. Works fully offline. |
-| Brainstorm | `/brainstorm [topic]` spawns 5 specialized AI personas (Architect, Innovator, Security, Code Quality, Performance) in an iterative debate; results saved to `brainstorm_outputs/` and synthesized by the main agent. |
+| Brainstorm | `/brainstorm [topic]` dynamically generates 5 expert personas suited to the topic (software, geopolitics, business, etc.), runs an iterative debate, saves results to `brainstorm_outputs/`, and synthesizes a Master Plan. |
 | Vision input | `/image [prompt]` captures the clipboard image and sends it to a local vision model (Ollama `llava`, `gemma4`, `llama3.2-vision`). Requires `pip install nano-claude-code[vision]`; Linux also needs `xclip`. |
 | Proactive monitoring | `/proactive [duration]` starts a background sentinel daemon; agent wakes automatically after inactivity, enabling continuous monitoring loops without user prompts |
 | Rich Live streaming | When `rich` is installed, responses render as live-updating Markdown in place — no duplicate raw text, clean tool-call interleaving |
@@ -1423,18 +1423,18 @@ These are passed as Whisper's `initial_prompt` so the STT engine prefers correct
 ### How it works
 
 1. **Context snapshot** — reads `README.md`, `CLAUDE.md`, and root file listing from the current working directory.
-2. **Five specialized agents** debate sequentially, each building on the previous responses:
+2. **Dynamic persona generation** — the model first generates 5 expert roles tailored to your topic. For a software architecture topic you get engineers and architects; for geopolitics you get analysts, diplomats, and economists; for a business question you get strategists and market experts. Falls back to default tech personas if generation fails.
+3. **Five agents debate sequentially**, each building on the previous responses.
+4. **Output saved** to `brainstorm_outputs/brainstorm_YYYYMMDD_HHMMSS.md` in the current directory.
+5. **Synthesis** — the main agent reads the saved file and produces a prioritized Master Plan.
 
-| Agent | Role | Focus |
-|---|---|---|
-| 🏗️ Architect | Principal Software Architect | Modularity, clear boundaries, long-term maintainability |
-| 💡 Innovator | Pragmatic Product Innovator | Bold, feasible ideas with high user value |
-| 🛡️ Security | Security & Risk Engineer | Vulnerabilities, data integrity, secrets handling |
-| 🔧 Code Quality | Senior Code Quality Lead | Code smells, DRY principles, complexity reduction |
-| ⚡ Performance | Performance & Optimization Specialist | I/O bottlenecks, latency, resource efficiency |
+**Example personas by topic:**
 
-3. **Output saved** to `brainstorm_outputs/brainstorm_YYYYMMDD_HHMMSS.md` in the current directory.
-4. **Synthesis** — the main agent reads the saved file and produces a prioritized Master Plan.
+| Topic | Example Generated Personas |
+|---|---|
+| Software architecture | 🏗️ Architect · 💡 Product Innovator · 🛡️ Security Engineer · 🔧 Code Quality Lead · ⚡ Performance Specialist |
+| US-Iran geopolitics | 🌍 Geopolitical Analyst · ⚖️ International Law Expert · 💰 Energy Economist · 🎖️ Military Strategist · 🕊️ Conflict Mediator |
+| Business strategy | 📈 Market Strategist · 💼 Operations Lead · 🔍 Competitive Intelligence · 💡 Innovation Director · 📊 Financial Analyst |
 
 ### Usage
 
