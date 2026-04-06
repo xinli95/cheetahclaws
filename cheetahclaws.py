@@ -3502,6 +3502,20 @@ def repl(config: dict, initial_prompt: str = None):
             # If this was a background task, we redraw the prompt for the user
             if is_background:
                 print(clr("\n[claude-code-local] » ", "yellow"), end="", flush=True)
+                
+                # If Telegram is connected and this background task didn't originate from a live Telegram query, 
+                # forward the alert to the Telegram user so they are notified!
+                is_tg_turn = config.get("_in_telegram_turn", False)
+                ttok = config.get("telegram_token")
+                tchat = config.get("telegram_chat_id")
+                if not is_tg_turn and ttok and tchat:
+                    if state.messages and state.messages[-1].get("role") == "assistant":
+                        ans_content = state.messages[-1].get("content", "")
+                        if isinstance(ans_content, list):
+                            parts = [b["text"] if isinstance(b, dict) else str(b) for b in ans_content if (isinstance(b, dict) and b.get("type") == "text") or isinstance(b, str)]
+                            ans_content = "\n".join(parts)
+                        if ans_content:
+                            _tg_send(ttok, tchat, ans_content)
 
         # Drain any AskUserQuestion prompts raised during this turn
         from tools import drain_pending_questions
