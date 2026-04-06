@@ -2464,6 +2464,585 @@ def cmd_image(args: str, state, config) -> Union[bool, tuple]:
     return ("__image__", prompt)
 
 
+def cmd_checkpoint(args: str, state, config) -> bool:
+    """List or restore checkpoints.
+
+    /checkpoint          — list all checkpoints
+    /checkpoint <id>     — restore to checkpoint #id
+    /checkpoint clear    — delete all checkpoints for this session
+    """
+    import checkpoint as ckpt
+
+    session_id = config.get("_session_id")
+    if not session_id:
+        err("No active session.")
+        return True
+
+    arg = args.strip()
+
+    # /checkpoint clear
+    if arg == "clear":
+        ckpt.delete_session_checkpoints(session_id)
+        info("All checkpoints cleared.")
+        return True
+
+    # /checkpoint (no args) — list
+    if not arg:
+        snaps = ckpt.list_snapshots(session_id)
+        if not snaps:
+            info("No checkpoints yet.")
+            return True
+        info(f"Checkpoints ({len(snaps)} total):")
+        for s in snaps:
+            ts = s["created_at"]
+            try:
+                t = datetime.fromisoformat(ts).strftime("%H:%M")
+            except Exception:
+                t = ts[:16]
+            preview = s["user_prompt_preview"]
+            if preview:
+                preview = f'  "{preview[:40]}{"..." if len(preview) > 40 else ""}"'
+            else:
+                preview = "  (initial state)"
+            print(f"  #{s['id']:<3} [turn {s['turn_count']}]  {t}{preview}")
+        return True
+
+    # /checkpoint <id> — restore
+    try:
+        snap_id = int(arg)
+    except ValueError:
+        err(f"Unknown subcommand: {arg}")
+        return True
+
+    snap = ckpt.get_snapshot(session_id, snap_id)
+    if snap is None:
+        err(f"Checkpoint #{snap_id} not found.")
+        return True
+
+    changed = ckpt.files_changed_since(session_id, snap_id)
+    ts = snap.created_at
+    try:
+        t = datetime.fromisoformat(ts).strftime("%H:%M")
+    except Exception:
+        t = ts[:16]
+
+    info(f"Checkpoint #{snap_id} (turn {snap.turn_count}, {t})")
+    if changed:
+        shown = changed[:4]
+        extra = f" (+{len(changed) - 4} files)" if len(changed) > 4 else ""
+        info(f"Files changed since: {', '.join(Path(f).name for f in shown)}{extra}")
+    print()
+    print("  1. Restore conversation + files")
+    print("  2. Restore conversation only")
+    print("  3. Restore files only")
+    print("  4. Cancel")
+    print()
+
+    try:
+        choice = input("Choice [1-4]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return True
+
+    restore_conversation = choice in ("1", "2")
+    restore_files = choice in ("1", "3")
+
+    if choice == "4" or choice not in ("1", "2", "3"):
+        info("Cancelled.")
+        return True
+
+    results = []
+
+    if restore_conversation:
+        state.messages = state.messages[:snap.message_index]
+        state.turn_count = snap.turn_count
+        state.total_input_tokens = snap.token_snapshot.get("input", 0)
+        state.total_output_tokens = snap.token_snapshot.get("output", 0)
+        results.append("conversation restored")
+
+    if restore_files:
+        file_results = ckpt.rewind_files(session_id, snap_id)
+        for r in file_results:
+            print(f"  {r}")
+        results.append(f"{len(file_results)} file(s) processed")
+
+    # Reset tracking and create a fresh snapshot of current state
+    ckpt.reset_tracked()
+    ckpt.make_snapshot(
+        session_id, state, config,
+        f"[rewind to #{snap_id}]",
+        tracked_edits=None,
+    )
+
+    info(f"Done: {', '.join(results)}. New checkpoint created.")
+    return True
+
+
+# /rewind is an alias for /checkpoint
+cmd_rewind = cmd_checkpoint
+
+
+def cmd_plan(args: str, state, config) -> bool:
+    """Enter/exit plan mode or show current plan.
+
+    /plan <description>  — enter plan mode and start planning
+    /plan                — show current plan file contents
+    /plan done           — exit plan mode, restore permissions
+    /plan status         — show plan mode status
+    """
+    arg = args.strip()
+
+    plan_file = config.get("_plan_file", "")
+    in_plan_mode = config.get("permission_mode") == "plan"
+
+    # /plan done — exit plan mode
+    if arg == "done":
+        if not in_plan_mode:
+            err("Not in plan mode.")
+            return True
+        prev = config.pop("_prev_permission_mode", "auto")
+        config["permission_mode"] = prev
+        info(f"Exited plan mode. Permission mode restored to: {prev}")
+        if plan_file:
+            info(f"Plan saved at: {plan_file}")
+            info("You can now ask Claude to implement the plan.")
+        return True
+
+    # /plan status
+    if arg == "status":
+        if in_plan_mode:
+            info(f"Plan mode: ACTIVE")
+            info(f"Plan file: {plan_file}")
+            info(f"Only the plan file is writable. Use /plan done to exit.")
+        else:
+            info("Plan mode: inactive")
+        return True
+
+    # /plan (no args) — show plan contents
+    if not arg:
+        if not plan_file:
+            info("Not in plan mode. Use /plan <description> to start planning.")
+            return True
+        p = Path(plan_file)
+        if p.exists() and p.stat().st_size > 0:
+            info(f"Plan file: {plan_file}")
+            print(p.read_text(encoding="utf-8"))
+        else:
+            info(f"Plan file is empty: {plan_file}")
+        return True
+
+    # /plan <description> — enter plan mode
+    if in_plan_mode:
+        err("Already in plan mode. Use /plan done to exit first.")
+        return True
+
+    # Create plan file
+    session_id = config.get("_session_id", "default")
+    plans_dir = Path.cwd() / ".nano_claude" / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = plans_dir / f"{session_id}.md"
+    plan_path.write_text(f"# Plan: {arg}\n\n", encoding="utf-8")
+
+    # Switch to plan mode
+    config["_prev_permission_mode"] = config.get("permission_mode", "auto")
+    config["permission_mode"] = "plan"
+    config["_plan_file"] = str(plan_path)
+
+    info("Plan mode activated (read-only except plan file).")
+    info(f"Plan file: {plan_path}")
+    info("Use /plan done to exit and start implementation.")
+    print()
+
+    # Return sentinel to trigger run_query with the description
+    return ("__plan__", arg)
+
+
+def cmd_compact(args: str, state, config) -> bool:
+    """Manually compact conversation history.
+
+    /compact              — compact with default summarization
+    /compact <focus>      — compact with focus instructions
+    """
+    from compaction import manual_compact
+    focus = args.strip()
+
+    if focus:
+        info(f"Compacting with focus: {focus}")
+    else:
+        info("Compacting conversation...")
+
+    success, msg = manual_compact(state, config, focus=focus)
+    if success:
+        info(msg)
+    else:
+        err(msg)
+    return True
+
+
+def cmd_init(args: str, state, config) -> bool:
+    """Initialize a CLAUDE.md file in the current directory.
+
+    /init          — create CLAUDE.md with a starter template
+    """
+    target = Path.cwd() / "CLAUDE.md"
+    if target.exists():
+        err(f"CLAUDE.md already exists at {target}")
+        info("Edit it directly or delete it first.")
+        return True
+
+    project_name = Path.cwd().name
+    template = (
+        f"# {project_name}\n\n"
+        "## Project Overview\n"
+        "<!-- Describe what this project does -->\n\n"
+        "## Tech Stack\n"
+        "<!-- Languages, frameworks, key dependencies -->\n\n"
+        "## Conventions\n"
+        "<!-- Coding style, naming conventions, patterns to follow -->\n\n"
+        "## Important Files\n"
+        "<!-- Key entry points, config files, etc. -->\n\n"
+        "## Testing\n"
+        "<!-- How to run tests, testing conventions -->\n\n"
+    )
+    target.write_text(template, encoding="utf-8")
+    info(f"Created {target}")
+    info("Edit it to give Claude context about your project.")
+    return True
+
+
+def cmd_export(args: str, state, config) -> bool:
+    """Export conversation history to a file.
+
+    /export              — export as markdown to .nano_claude/exports/
+    /export <filename>   — export to a specific file (.md or .json)
+    """
+    if not state.messages:
+        err("No conversation to export.")
+        return True
+
+    arg = args.strip()
+    if arg:
+        out_path = Path(arg)
+    else:
+        export_dir = Path.cwd() / ".nano_claude" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = export_dir / f"conversation_{ts}.md"
+
+    is_json = out_path.suffix.lower() == ".json"
+
+    if is_json:
+        out_path.write_text(
+            json.dumps(state.messages, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    else:
+        lines = []
+        for m in state.messages:
+            role = m.get("role", "unknown")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = "(structured content)"
+            if role == "user":
+                lines.append(f"## User\n\n{content}\n")
+            elif role == "assistant":
+                lines.append(f"## Assistant\n\n{content}\n")
+            elif role == "tool":
+                name = m.get("name", "tool")
+                lines.append(f"### Tool: {name}\n\n```\n{content[:2000]}\n```\n")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+
+    info(f"Exported {len(state.messages)} messages to {out_path}")
+    return True
+
+
+def cmd_copy(args: str, state, config) -> bool:
+    """Copy the last assistant response to clipboard.
+
+    /copy   — copy last assistant message to clipboard
+    """
+    # Find last assistant message
+    last_reply = None
+    for m in reversed(state.messages):
+        if m.get("role") == "assistant":
+            content = m.get("content", "")
+            if isinstance(content, str) and content.strip():
+                last_reply = content
+                break
+
+    if not last_reply:
+        err("No assistant response to copy.")
+        return True
+
+    try:
+        import subprocess as _sp
+        import sys as _sys
+        if _sys.platform == "win32":
+            proc = _sp.Popen(["clip"], stdin=_sp.PIPE)
+            proc.communicate(last_reply.encode("utf-16le"))
+        elif _sys.platform == "darwin":
+            proc = _sp.Popen(["pbcopy"], stdin=_sp.PIPE)
+            proc.communicate(last_reply.encode("utf-8"))
+        else:
+            # Linux: try xclip, then xsel
+            for cmd in (["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+                try:
+                    proc = _sp.Popen(cmd, stdin=_sp.PIPE)
+                    proc.communicate(last_reply.encode("utf-8"))
+                    break
+                except FileNotFoundError:
+                    continue
+            else:
+                err("No clipboard tool found. Install xclip or xsel.")
+                return True
+        info(f"Copied {len(last_reply)} chars to clipboard.")
+    except Exception as e:
+        err(f"Failed to copy: {e}")
+    return True
+
+
+def cmd_status(args: str, state, config) -> bool:
+    """Show current session status.
+
+    /status   — model, provider, permissions, session info
+    """
+    from providers import detect_provider
+    from compaction import estimate_tokens, get_context_limit
+
+    model = config.get("model", "unknown")
+    provider = detect_provider(model)
+    perm_mode = config.get("permission_mode", "auto")
+    session_id = config.get("_session_id", "N/A")
+    turn_count = getattr(state, "turn_count", 0)
+    msg_count = len(getattr(state, "messages", []))
+    tokens_in = getattr(state, "total_input_tokens", 0)
+    tokens_out = getattr(state, "total_output_tokens", 0)
+    est_ctx = estimate_tokens(getattr(state, "messages", []))
+    ctx_limit = get_context_limit(model)
+    ctx_pct = (est_ctx / ctx_limit * 100) if ctx_limit else 0
+    plan_mode = config.get("permission_mode") == "plan"
+
+    print(f"  Version:     {VERSION}")
+    print(f"  Model:       {model} ({provider})")
+    print(f"  Permissions: {perm_mode}" + (" [PLAN MODE]" if plan_mode else ""))
+    print(f"  Session:     {session_id}")
+    print(f"  Turns:       {turn_count}")
+    print(f"  Messages:    {msg_count}")
+    print(f"  Tokens:      ~{tokens_in} in / ~{tokens_out} out")
+    print(f"  Context:     ~{est_ctx} / {ctx_limit} ({ctx_pct:.0f}%)")
+    return True
+
+
+def cmd_doctor(args: str, state, config) -> bool:
+    """Diagnose installation health and connectivity.
+
+    /doctor   — run all health checks
+    """
+    import subprocess as _sp
+    import sys as _sys
+    from providers import PROVIDERS, detect_provider, get_api_key
+
+    ok_n = warn_n = fail_n = 0
+
+    def _print_safe(s):
+        try:
+            print(s)
+        except UnicodeEncodeError:
+            print(s.encode("ascii", errors="replace").decode())
+
+    def ok(msg):
+        nonlocal ok_n; ok_n += 1
+        _print_safe(clr("  [PASS] ", "green") + msg)
+
+    def warn(msg):
+        nonlocal warn_n; warn_n += 1
+        _print_safe(clr("  [WARN] ", "yellow") + msg)
+
+    def fail(msg):
+        nonlocal fail_n; fail_n += 1
+        _print_safe(clr("  [FAIL] ", "red") + msg)
+
+    info("Running diagnostics...")
+    print()
+
+    # ── 1. Python version ──
+    v = _sys.version_info
+    if v >= (3, 10):
+        ok(f"Python {v.major}.{v.minor}.{v.micro}")
+    else:
+        fail(f"Python {v.major}.{v.minor}.{v.micro} (need ≥3.10)")
+
+    # ── 2. Git ──
+    try:
+        r = _sp.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            ok(f"Git: {r.stdout.strip()}")
+        else:
+            fail("Git: not working")
+    except Exception:
+        fail("Git: not found")
+
+    try:
+        r = _sp.run(["git", "rev-parse", "--is-inside-work-tree"],
+                     capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            ok("Inside a git repository")
+        else:
+            warn("Not inside a git repository")
+    except Exception:
+        warn("Could not check git repo status")
+
+    # ── 3. Current model + API key ──
+    model = config.get("model", "")
+    provider = detect_provider(model)
+    key = get_api_key(provider, config)
+
+    if key:
+        ok(f"API key for {provider}: set ({key[:4]}...{key[-4:]})")
+    elif provider in ("ollama", "lmstudio"):
+        ok(f"Provider {provider}: no key needed (local)")
+    else:
+        fail(f"API key for {provider}: NOT SET")
+
+    # ── 4. API connectivity test ──
+    if key or provider in ("ollama", "lmstudio"):
+        print(f"  ... testing {provider} API connectivity...")
+        try:
+            import urllib.request, urllib.error
+            prov = PROVIDERS.get(provider, {})
+            ptype = prov.get("type", "openai")
+
+            if ptype == "anthropic":
+                req = urllib.request.Request(
+                    "https://api.anthropic.com/v1/messages",
+                    data=json.dumps({
+                        "model": model,
+                        "max_tokens": 1,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    }).encode(),
+                    headers={
+                        "x-api-key": key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                )
+                try:
+                    urllib.request.urlopen(req, timeout=10)
+                    ok(f"Anthropic API: reachable, model {model} works")
+                except urllib.error.HTTPError as e:
+                    if e.code == 401:
+                        fail("Anthropic API: invalid API key (401)")
+                    elif e.code == 404:
+                        fail(f"Anthropic API: model {model} not found (404)")
+                    elif e.code == 429:
+                        warn("Anthropic API: rate limited (429) — key is valid")
+                    else:
+                        warn(f"Anthropic API: HTTP {e.code}")
+                except Exception as e:
+                    fail(f"Anthropic API: connection error — {e}")
+
+            elif ptype == "ollama":
+                base = prov.get("base_url", "http://localhost:11434")
+                try:
+                    urllib.request.urlopen(f"{base}/api/tags", timeout=5)
+                    ok(f"Ollama: reachable at {base}")
+                except Exception:
+                    fail(f"Ollama: cannot reach {base} — is Ollama running?")
+
+            else:
+                base = prov.get("base_url", "")
+                if provider == "custom":
+                    base = config.get("custom_base_url", base or "")
+                if base:
+                    models_url = base.rstrip("/") + "/models"
+                    req = urllib.request.Request(
+                        models_url,
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+                    try:
+                        urllib.request.urlopen(req, timeout=10)
+                        ok(f"{provider} API: reachable")
+                    except urllib.error.HTTPError as e:
+                        if e.code == 401:
+                            fail(f"{provider} API: invalid API key (401)")
+                        elif e.code == 429:
+                            warn(f"{provider} API: rate limited (429) — key is valid")
+                        else:
+                            warn(f"{provider} API: HTTP {e.code}")
+                    except Exception as e:
+                        fail(f"{provider} API: connection error — {e}")
+                else:
+                    warn(f"{provider}: no base_url configured")
+        except Exception as e:
+            warn(f"API test skipped: {e}")
+
+    # ── 5. Other configured API keys ──
+    print()
+    for pname, pdata in PROVIDERS.items():
+        if pname == provider:
+            continue
+        env_var = pdata.get("api_key_env")
+        if env_var and os.environ.get(env_var, ""):
+            ok(f"{pname} key ({env_var}): set")
+
+    # ── 6. Optional dependencies ──
+    print()
+    for mod, desc in [
+        ("rich", "Rich (live markdown rendering)"),
+        ("PIL", "Pillow (clipboard image /image)"),
+        ("sounddevice", "sounddevice (voice recording)"),
+        ("faster_whisper", "faster-whisper (local STT)"),
+    ]:
+        try:
+            __import__(mod)
+            ok(desc)
+        except ImportError:
+            warn(f"{desc}: not installed")
+
+    # ── 7. CLAUDE.md ──
+    print()
+    claude_md = Path.cwd() / "CLAUDE.md"
+    global_md = Path.home() / ".claude" / "CLAUDE.md"
+    if claude_md.exists():
+        ok(f"Project CLAUDE.md: {claude_md}")
+    else:
+        warn("No project CLAUDE.md (run /init to create)")
+    if global_md.exists():
+        ok(f"Global CLAUDE.md: {global_md}")
+
+    # ── 8. Checkpoints disk usage ──
+    ckpt_root = Path.home() / ".nano_claude" / "checkpoints"
+    if ckpt_root.exists():
+        total = sum(f.stat().st_size for f in ckpt_root.rglob("*") if f.is_file())
+        mb = total / (1024 * 1024)
+        sessions = sum(1 for d in ckpt_root.iterdir() if d.is_dir())
+        if mb > 100:
+            warn(f"Checkpoints: {mb:.1f} MB ({sessions} sessions)")
+        else:
+            ok(f"Checkpoints: {mb:.1f} MB ({sessions} sessions)")
+
+    # ── 9. Permission mode ──
+    perm = config.get("permission_mode", "auto")
+    if perm == "accept-all":
+        warn(f"Permission mode: {perm} (all operations auto-approved)")
+    else:
+        ok(f"Permission mode: {perm}")
+
+    # ── Summary ──
+    print()
+    total = ok_n + warn_n + fail_n
+    summary = f"  {ok_n} passed, {warn_n} warnings, {fail_n} failures ({total} checks)"
+    if fail_n:
+        _print_safe(clr(summary, "red"))
+    elif warn_n:
+        _print_safe(clr(summary, "yellow"))
+    else:
+        _print_safe(clr(summary, "green"))
+
+    return True
+
+
 COMMANDS = {
     "help":        cmd_help,
     "clear":       cmd_clear,
@@ -2493,6 +3072,15 @@ COMMANDS = {
     "worker":      cmd_worker,
     "ssj":         cmd_ssj,
     "telegram":    cmd_telegram,
+    "checkpoint":  cmd_checkpoint,
+    "rewind":      cmd_rewind,
+    "plan":        cmd_plan,
+    "compact":     cmd_compact,
+    "init":        cmd_init,
+    "export":      cmd_export,
+    "copy":        cmd_copy,
+    "status":      cmd_status,
+    "doctor":      cmd_doctor,
     "exit":        cmd_exit,
     "quit":        cmd_exit,
     "resume":      cmd_resume
@@ -2511,8 +3099,8 @@ def handle_slash(line: str, state, config) -> Union[bool, tuple]:
     handler = COMMANDS.get(cmd)
     if handler:
         result = handler(args, state, config)
-        # cmd_voice/cmd_image/cmd_brainstorm return sentinels to ask the REPL to run_query
-        if isinstance(result, tuple) and result[0] in ("__voice__", "__image__", "__brainstorm__", "__worker__", "__ssj_cmd__", "__ssj_query__", "__ssj_debate__", "__ssj_passthrough__", "__ssj_promote_worker__"):
+        # cmd_voice/cmd_image/cmd_brainstorm/cmd_plan return sentinels to ask the REPL to run_query
+        if isinstance(result, tuple) and result[0] in ("__voice__", "__image__", "__brainstorm__", "__worker__", "__ssj_cmd__", "__ssj_query__", "__ssj_debate__", "__ssj_passthrough__", "__ssj_promote_worker__", "__plan__"):
             return result
         return True
 
@@ -2564,6 +3152,15 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "worker":      ("Auto-implement pending tasks",       []),
     "ssj":         ("SSJ Developer Mode — power menu",    []),
     "telegram":    ("Telegram bot bridge",                ["stop", "status"]),
+    "checkpoint":  ("List / restore checkpoints",          ["clear"]),
+    "rewind":      ("Rewind to checkpoint (alias)",        ["clear"]),
+    "plan":        ("Enter/exit plan mode",                ["done", "status"]),
+    "compact":     ("Compact conversation history",         []),
+    "init":        ("Initialize CLAUDE.md template",        []),
+    "export":      ("Export conversation to file",          []),
+    "copy":        ("Copy last response to clipboard",      []),
+    "status":      ("Show session status and model info",   []),
+    "doctor":      ("Diagnose installation health",         []),
     "exit":        ("Exit clawspring",              []),
     "quit":        ("Exit (alias for /exit)",             []),
     "resume":      ("Resume last session",                []),
@@ -2638,6 +3235,15 @@ def repl(config: dict, initial_prompt: str = None):
     state = AgentState()
     verbose = config.get("verbose", False)
 
+    # ── Checkpoint system init ──
+    import checkpoint as ckpt
+    session_id = uuid.uuid4().hex[:8]
+    config["_session_id"] = session_id
+    ckpt.set_session(session_id)
+    ckpt.cleanup_old_sessions()
+    # Initial snapshot: capture the "blank slate" before any prompts
+    ckpt.make_snapshot(session_id, state, {}, "(initial state)", tracked_edits=None)
+
     # Banner
     if not initial_prompt:
         from providers import detect_provider
@@ -2704,8 +3310,8 @@ def repl(config: dict, initial_prompt: str = None):
             verbose = config.get("verbose", False)
     
             # Rebuild system prompt each turn (picks up cwd changes, etc.)
-            system_prompt = build_system_prompt()
-            
+            system_prompt = build_system_prompt(config)
+
             if is_background and not config.get("_telegram_incoming"):
                 print(clr("\n\n[Background Event Triggered]", "yellow"))
             config.pop("_telegram_incoming", None)
@@ -2835,7 +3441,22 @@ def repl(config: dict, initial_prompt: str = None):
         # Drain any AskUserQuestion prompts raised during this turn
         from tools import drain_pending_questions
         drain_pending_questions()
-        
+
+        # ── Auto-snapshot after each turn ──
+        try:
+            tracked = ckpt.get_tracked_edits()
+            # Throttle: skip snapshot only if no files changed AND no new messages
+            last_snaps = ckpt.list_snapshots(session_id)
+            skip = False
+            if not tracked and last_snaps:
+                if len(state.messages) == last_snaps[-1].get("message_index", -1):
+                    skip = True
+            if not skip:
+                ckpt.make_snapshot(session_id, state, config, user_input, tracked_edits=tracked)
+            ckpt.reset_tracked()
+        except Exception:
+            pass  # never let checkpoint errors break the REPL
+
         config["_last_interaction_time"] = time.time()
 
     config["_run_query_callback"] = lambda msg: run_query(msg, is_background=True)
@@ -3052,6 +3673,16 @@ def repl(config: dict, initial_prompt: str = None):
                 _, image_prompt = result
                 try:
                     run_query(image_prompt)
+                except KeyboardInterrupt:
+                    _track_ctrl_c()
+                    print(clr("\n  (interrupted)", "yellow"))
+                break
+
+            # Plan sentinel: ("__plan__", description)
+            if result[0] == "__plan__":
+                _, plan_desc = result
+                try:
+                    run_query(f"Please analyze the codebase and create a detailed implementation plan for: {plan_desc}")
                 except KeyboardInterrupt:
                     _track_ctrl_c()
                     print(clr("\n  (interrupted)", "yellow"))

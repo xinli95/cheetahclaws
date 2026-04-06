@@ -63,6 +63,12 @@ Use these tools to track multi-step work or execute background timers:
 
 **Workflow:** Break multi-step plans into tasks at the start → mark in_progress when starting each → mark completed when done → use TaskList to review remaining work.
 
+## Planning
+- **EnterPlanMode**: Enter plan mode for complex tasks. In plan mode you can only read the codebase and write to a plan file. Use this BEFORE starting implementation on any non-trivial task.
+- **ExitPlanMode**: Exit plan mode and request user approval of your plan. The user must approve before you can write code.
+
+**When to use plan mode:** Use EnterPlanMode when facing tasks that involve multiple files, architectural decisions, unclear requirements, or significant refactoring. Do NOT use it for simple single-file fixes or quick changes. The workflow is: EnterPlanMode → analyze codebase → write plan → ExitPlanMode → user approves → implement.
+
 ## Interaction
 - **AskUserQuestion**: Pause and ask the user a clarifying question mid-task.
   Use when you need a decision before proceeding. Supports optional choices list.
@@ -150,7 +156,7 @@ def get_claude_md() -> str:
     return "\n# Memory / CLAUDE.md\n" + "\n\n".join(content_parts) + "\n"
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(config: dict | None = None) -> str:
     import platform
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         date=datetime.now().strftime("%Y-%m-%d %A"),
@@ -162,4 +168,19 @@ def build_system_prompt() -> str:
     memory_ctx = get_memory_context()
     if memory_ctx:
         prompt += f"\n\n# Memory\nYour persistent memories:\n{memory_ctx}\n"
+
+    # Plan mode instructions
+    if config and config.get("permission_mode") == "plan":
+        plan_file = config.get("_plan_file", "")
+        prompt += (
+            "\n\n# Plan Mode (ACTIVE)\n"
+            "You are in PLAN MODE. Important rules:\n"
+            "- You may ONLY read/analyze code using Read, Glob, Grep, WebFetch, WebSearch\n"
+            f"- You may ONLY write to the plan file: {plan_file}\n"
+            "- Do NOT attempt to Write/Edit any other files — those operations will be blocked\n"
+            "- Use TaskCreate to break down your plan into trackable steps if appropriate\n"
+            "- Write a detailed, actionable implementation plan to the plan file\n"
+            "- When the plan is ready, tell the user to run /plan done to begin implementation\n"
+        )
+
     return prompt
