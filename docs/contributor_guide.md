@@ -14,7 +14,7 @@ If you remember only one thing, remember this flow:
 3. `agent.py` runs the core loop (stream model output, execute tools, append tool results, continue).
 4. `providers.py` adapts model APIs (Anthropic vs OpenAI-compatible providers).
 5. `tool_registry.py` is the single source of truth for all callable tools.
-6. Feature packages (`memory/`, `multi_agent/`, `skill/`, `mcp/`, `plugin/`, `task/`, `voice/`) plug into that loop.
+6. Feature packages (`memory/`, `multi_agent/`, `skill/`, `mcp/`, `plugin/`, `task/`, `checkpoint/`, `voice/`) plug into that loop.
 
 ---
 
@@ -91,6 +91,14 @@ Use this package for plugin manifest semantics, install lifecycle, or recommenda
 - `task/tools.py` `TaskCreate/Update/Get/List` schemas + formatting.
 
 Use this package for status transitions, dependency graph behavior, metadata semantics, and storage format updates.
+
+## Checkpoints (`checkpoint/`)
+- `checkpoint/types.py` `FileBackup` + `Snapshot` data models.
+- `checkpoint/store.py` file-level backup, snapshot persistence, rewind, cleanup.
+- `checkpoint/hooks.py` Write/Edit/NotebookEdit interception (backup before modify).
+- REPL command wiring lives in `clawspring.py` (`cmd_checkpoint`, `cmd_rewind`).
+
+Use this package for snapshot policies, backup strategies, file restore behavior, or storage format updates.
 
 ## Voice (`voice/`)
 - `voice/recorder.py` capture backends (`sounddevice`, `arecord`, `sox`) + silence detection.

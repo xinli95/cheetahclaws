@@ -1,6 +1,7 @@
 """Core agent loop: neutral message format, multi-provider streaming."""
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Generator
@@ -126,12 +127,24 @@ def run(
             # Permission gate
             permitted = _check_permission(tc, config)
             if not permitted:
-                req = PermissionRequest(description=_permission_desc(tc))
-                yield req
-                permitted = req.granted
+                if config.get("permission_mode") == "plan":
+                    # Plan mode: silently deny writes (no user prompt)
+                    permitted = False
+                else:
+                    req = PermissionRequest(description=_permission_desc(tc))
+                    yield req
+                    permitted = req.granted
 
             if not permitted:
-                result = "Denied: user rejected this operation"
+                if config.get("permission_mode") == "plan":
+                    plan_file = config.get("_plan_file", "")
+                    result = (
+                        f"[Plan mode] Write operations are blocked except to the plan file: {plan_file}\n"
+                        "Finish your analysis and write the plan to the plan file. "
+                        "The user will run /plan done to exit plan mode and begin implementation."
+                    )
+                else:
+                    result = "Denied: user rejected this operation"
             else:
                 result = execute_tool(
                     tc["name"], tc["input"],
@@ -155,13 +168,34 @@ def run(
 def _check_permission(tc: dict, config: dict) -> bool:
     """Return True if operation is auto-approved (no need to ask user)."""
     perm_mode = config.get("permission_mode", "auto")
+    name = tc["name"]
+
+    # Plan mode tools are always auto-approved
+    if name in ("EnterPlanMode", "ExitPlanMode"):
+        return True
+
     if perm_mode == "accept-all":
         return True
     if perm_mode == "manual":
         return False   # always ask
 
+    if perm_mode == "plan":
+        # Allow writes ONLY to the plan file
+        if name in ("Write", "Edit"):
+            plan_file = config.get("_plan_file", "")
+            target = tc["input"].get("file_path", "")
+            if plan_file and target and \
+               os.path.normpath(target) == os.path.normpath(plan_file):
+                return True
+            return False
+        if name == "NotebookEdit":
+            return False
+        if name == "Bash":
+            from tools import _is_safe_bash
+            return _is_safe_bash(tc["input"].get("command", ""))
+        return True  # reads are fine
+
     # "auto" mode: only ask for writes and non-safe bash
-    name = tc["name"]
     if name in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
         return True
     if name == "Bash":
