@@ -2,7 +2,7 @@ Français | [中文](https://github.com/SafeRL-Lab/nano-claude-code/blob/main/do
 
 <div align="center">
   <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SafeRL-Lab/nano-claude-code)">
-    <img src="https://github.com/SafeRL-Lab/nano-claude-code/blob/main/docs/logo-v1.png" alt="Logo" width="280"> 
+    <img src="https://github.com/SafeRL-Lab/cheetahclaws/blob/main/docs/logo-5.png" alt="Logo" width="280"> 
   </a>
 
 <h1 align="center" style="font-size: 30px;"><strong><em>Nano Claude Code</em></strong> : une réimplémentation Python rapide et facile à utiliser de Claude Code, compatible avec n’importe quel modèle</h1>
