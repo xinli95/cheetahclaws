@@ -72,7 +72,14 @@ English | [中文](https://github.com/SafeRL-Lab/clawspring/blob/main/docs/READM
 ## 🔥🔥🔥 News (Pacific Time)
 
 
-- Apr 06, 2026 (**v3.05.52**): **Checkpoint system, plan mode, compact, and utility commands, support MiniMax Models, fix telegram bugs, fix provider, telegram turns** 
+- Apr 06, 2026 (**v3.05.53**): **Telegram interactive menus, `/img` alias, `/voice device`, OpenAI/Gemini vision support**
+  - **Telegram interactive menus fixed** — slash commands with interactive input (e.g. `/ollama`, `/permission`, `/checkpoint`) were blocking the Telegram poll loop, making it impossible to respond to the menu prompts. Slash commands now run in a daemon thread (like regular queries), keeping the poll loop free. All interactive menus (`ask_input_interactive`) work correctly over Telegram.
+  - **`/img` alias** — `/img` is now an alias for `/image`, for faster clipboard-image workflows.
+  - **`/voice device`** — new subcommand to list all available input microphones and select one interactively. The selected device index is persisted in the session config and shown in `/voice status`. Useful on systems with multiple audio interfaces (e.g. USB headset + built-in mic).
+  - **Vision support for OpenAI / Gemini models** — `/img` (and `/image`) now sends images in the OpenAI multipart `image_url` format to cloud vision models (GPT-4o, Gemini 2.0 Flash, etc.), in addition to the existing Ollama native format. No configuration change needed — the correct format is selected automatically based on the active provider.
+  - **Bug fix: threading race condition** — `_in_telegram_turn` is now tracked via `threading.local()` per-slash-runner thread instead of a shared config key, eliminating a race condition that could corrupt the flag when a regular message arrived while an interactive slash command was waiting for input.
+
+- Apr 06, 2026 (**v3.05.52**): **Checkpoint system, plan mode, compact, and utility commands, support MiniMax Models, fix telegram bugs** 
   - **Checkpoint system** (`checkpoint/` package): auto-snapshots conversation state and file changes after every turn. `/checkpoint` lists all snapshots; `/checkpoint <id>` rewinds both files and conversation history to any previous state; `/checkpoint clear` removes all snapshots for the session. `/rewind` is an alias. 100-snapshot sliding window; initial snapshot captured at session start. Throttling: skips when nothing changed. File backups use copy-on-write; snapshots capture post-edit state.
   - **Plan mode**: `/plan <desc>` enters a read-only analysis mode — Claude may only read the codebase and write to a dedicated plan file (`.nano_claude/plans/<session_id>.md`). All other writes are silently blocked with a helpful message. `/plan` shows the current plan; `/plan done` exits plan mode and restores original permissions; `/plan status` reports whether plan mode is active. Two new agent tools — `EnterPlanMode` and `ExitPlanMode` — let Claude autonomously enter and exit plan mode for complex multi-file tasks; both are auto-approved in all permission modes.
   - **`/compact [focus]`**: manually trigger conversation compaction at any time. An optional focus string guides the LLM summarizer on what context to preserve. Auto-compact and manual compact both restore plan file context after compaction.
@@ -347,8 +354,8 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | Brainstorm | `/brainstorm [topic]` generates N expert personas suited to the topic (2–100, default 5, chosen interactively), runs an iterative debate, saves results to `brainstorm_outputs/`, and synthesizes a Master Plan + auto-generates `brainstorm_outputs/todo_list.txt`. |
 | SSJ Developer Mode | `/ssj` opens a persistent interactive power menu with 10 shortcuts: Brainstorm, TODO viewer, Worker, Expert Debate, Propose, Review, Readme, Commit, Scan, Promote. Stays open between actions; `/command` passthrough supported. Debate shows animated per-round spinner and saves result next to the debated file. |
 | Worker | `/worker [task#s]` reads `brainstorm_outputs/todo_list.txt`, implements each pending task with a dedicated model prompt, and marks it done (`- [x]`). Supports task selection (`/worker 1,4,6`), custom path (`--path`), and worker count limit (`--workers`). Detects and redirects accidental brainstorm `.md` paths. |
-| Telegram bridge | `/telegram <token> <chat_id>` starts a bot bridge: receive messages from Telegram, run the model, and reply — all from your phone. Typing indicator, slash command passthrough, and auto-start on launch if configured. |
-| Vision input | `/image [prompt]` captures the clipboard image and sends it to a local vision model (Ollama `llava`, `gemma4`, `llama3.2-vision`). Requires `pip install cheetahclaws[vision]`; Linux also needs `xclip`. |
+| Telegram bridge | `/telegram <token> <chat_id>` starts a bot bridge: receive messages from Telegram, run the model, and reply — all from your phone. Typing indicator, slash command passthrough (including interactive menus), and auto-start on launch if configured. |
+| Vision input | `/image` (or `/img`) captures the clipboard image and sends it to any vision-capable model — Ollama (`llava`, `gemma4`, `llama3.2-vision`) via native format, or cloud models (GPT-4o, Gemini 2.0 Flash, …) via OpenAI `image_url` multipart format. Requires `pip install cheetahclaws[vision]`; Linux also needs `xclip`. |
 | Proactive monitoring | `/proactive [duration]` starts a background sentinel daemon; agent wakes automatically after inactivity, enabling continuous monitoring loops without user prompts |
 | Force quit | 3× Ctrl+C within 2 seconds triggers `os._exit(1)` — kills the process immediately regardless of blocking I/O |
 | Rich Live streaming | When `rich` is installed, responses render as live-updating Markdown in place. Auto-disabled in SSH sessions to prevent repeated output; override with `/config rich_live=false`. |
@@ -841,9 +848,11 @@ Type `/` and press **Tab** to see all commands with descriptions. Continue typin
 | `/mcp add <name> <cmd> [args]` | Add a stdio MCP server to user config |
 | `/mcp remove <name>` | Remove a server from user config |
 | `/voice` | Record voice, transcribe with Whisper, auto-submit as prompt |
-| `/image [prompt]` | Capture clipboard image and send to vision model with optional prompt |
 | `/voice status` | Show recording and STT backend availability |
 | `/voice lang <code>` | Set STT language (e.g. `zh`, `en`, `ja`; `auto` to detect) |
+| `/voice device` | List available input microphones and select one interactively |
+| `/image [prompt]` | Capture clipboard image and send to vision model with optional prompt |
+| `/img [prompt]` | Alias for `/image` |
 | `/proactive` | Show current proactive polling status (ON/OFF and interval) |
 | `/proactive <duration>` | Enable background sentinel polling (e.g. `5m`, `30s`, `1h`) |
 | `/proactive off` | Disable background polling |
@@ -1591,8 +1600,25 @@ These are passed as Whisper's `initial_prompt` so the STT engine prefers correct
 | Command | Description |
 |---|---|
 | `/voice` | Record voice and auto-submit the transcript as your next prompt |
-| `/voice status` | Show which recording and STT backends are available |
+| `/voice status` | Show which recording and STT backends are available, plus the active microphone |
 | `/voice lang <code>` | Set transcription language (`en`, `zh`, `ja`, `de`, `fr`, … default: `auto`) |
+| `/voice device` | List all available input microphones and select one interactively; persisted for the session |
+
+### Selecting a microphone
+
+On systems with multiple audio interfaces (USB headsets, virtual devices, etc.) you can pick the exact input device:
+
+```
+[myproject] ❯ /voice device
+  🎙  Available input devices:
+    0. Built-in Microphone
+    1. USB Headset (USB Audio)  ◀  (currently selected)
+    2. Virtual Input (BlackHole)
+  Select device # (Enter to cancel): 1
+✓  Microphone set to: [1] USB Headset (USB Audio)
+```
+
+The selected device is shown in `/voice status` and used for all subsequent recordings until you change it or restart.
 
 ### How it compares to Claude Code
 
@@ -1845,6 +1871,7 @@ Phone (Telegram)                  cheetahclaws terminal
 - **Typing indicator** is sent every 4 seconds while the model processes, so the chat feels responsive.
 - **Unauthorized senders** receive `⛔ Unauthorized.` and their messages are dropped.
 - **Slash command passthrough**: send `/cost`, `/model gpt-4o`, `/clear`, etc. from Telegram and they execute in cheetahclaws.
+- **Interactive menus over Telegram**: commands with interactive prompts (e.g. `/ollama` model picker, `/permission`, `/checkpoint` restore) now run in a background thread so the poll loop stays free. The menu options are sent as a Telegram message and the next reply you send is used as the selection.
 - **`/stop` or `/off`** sent from Telegram stops the bridge gracefully.
 
 ### Commands
