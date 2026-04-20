@@ -458,54 +458,5 @@ class TestIntegration:
         assert state.turn_count == 0
 
 
-def test_cache_tokens_in_snapshot(tmp_home):
-    """Cache tokens flow from AgentState to checkpoint snapshot."""
-    from agent import AgentState
-    from checkpoint.store import make_snapshot
-
-    state = AgentState()
-    state.total_input_tokens = 100
-    state.total_output_tokens = 50
-    state.total_cache_read_tokens = 30
-    state.total_cache_write_tokens = 20
-    state.messages = [{"role": "user", "content": "hi"}]
-    state.turn_count = 1
-
-    snap = make_snapshot("test_cache", state, {}, "hi")
-    tokens = snap.token_snapshot
-
-    assert tokens["cache_read"] == 30, f"Expected 30, got {tokens.get('cache_read')}"
-    assert tokens["cache_write"] == 20, f"Expected 20, got {tokens.get('cache_write')}"
-    assert tokens["input"] == 100
-    assert tokens["output"] == 50
-
-
-def test_assistant_turn_cache_tokens():
-    """AssistantTurn carries cache token counts from the provider."""
-    from providers import AssistantTurn
-
-    turn = AssistantTurn("hello", [], 100, 50, cache_read_tokens=30, cache_write_tokens=20)
-    assert turn.cache_read_tokens == 30
-    assert turn.cache_write_tokens == 20
-
-    # Defaults to 0
-    turn2 = AssistantTurn("hello", [], 100, 50)
-    assert turn2.cache_read_tokens == 0
-    assert turn2.cache_write_tokens == 0
-
-
-def test_agent_state_accumulates_cache_tokens():
-    """AgentState accumulates cache tokens across turns."""
-    from agent import AgentState
-
-    state = AgentState()
-    assert state.total_cache_read_tokens == 0
-    assert state.total_cache_write_tokens == 0
-
-    state.total_cache_read_tokens += 10
-    state.total_cache_write_tokens += 5
-    state.total_cache_read_tokens += 20
-    state.total_cache_write_tokens += 15
-
-    assert state.total_cache_read_tokens == 30
-    assert state.total_cache_write_tokens == 20
+# Cache-token coverage lives in tests/test_cache_tokens.py so this module
+# stays focused on snapshot / restore / file-backup behaviour.

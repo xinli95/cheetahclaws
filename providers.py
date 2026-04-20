@@ -527,13 +527,40 @@ def stream_anthropic(
                     "input": block.input,
                 })
 
+        cache_r, cache_w = _anthropic_cache_tokens(final.usage)
         yield AssistantTurn(
             text, tool_calls,
             final.usage.input_tokens,
             final.usage.output_tokens,
-            cache_read_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
-            cache_write_tokens=getattr(final.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_tokens=cache_r,
+            cache_write_tokens=cache_w,
         )
+
+
+def _anthropic_cache_tokens(usage) -> tuple[int, int]:
+    """Extract (cache_read, cache_write) token counts from an Anthropic usage object.
+
+    Returns (0, 0) if the fields are missing -- older Anthropic SDKs, non-cached
+    calls and most downstream wrappers (e.g. Bedrock over litellm) all fall
+    through to this default rather than raising AttributeError.
+    """
+    read  = getattr(usage, "cache_read_input_tokens", 0) or 0
+    write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    return int(read), int(write)
+
+
+def _openai_cached_read_tokens(usage) -> int:
+    """Extract the OpenAI-compatible cached read-token count.
+
+    OpenAI-compatible providers surface cache hits as
+    `usage.prompt_tokens_details.cached_tokens`; there is no separate
+    "cache creation" counter in the OpenAI schema (caching is implicit on
+    their side), so the write-side is always 0 for this family of providers.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None:
+        return 0
+    return int(getattr(details, "cached_tokens", 0) or 0)
 
 
 def stream_openai_compat(
@@ -598,9 +625,7 @@ def stream_openai_compat(
             if hasattr(chunk, "usage") and chunk.usage:
                 in_tok  = chunk.usage.prompt_tokens
                 out_tok = chunk.usage.completion_tokens
-                _details = getattr(chunk.usage, "prompt_tokens_details", None)
-                if _details:
-                    cache_read_tok = getattr(_details, "cached_tokens", 0) or 0
+                cache_read_tok = _openai_cached_read_tokens(chunk.usage) or cache_read_tok
             continue
 
         choice = chunk.choices[0]
@@ -631,9 +656,7 @@ def stream_openai_compat(
         if hasattr(chunk, "usage") and chunk.usage:
             in_tok  = chunk.usage.prompt_tokens  or in_tok
             out_tok = chunk.usage.completion_tokens or out_tok
-            _details = getattr(chunk.usage, "prompt_tokens_details", None)
-            if _details:
-                cache_read_tok = getattr(_details, "cached_tokens", 0) or cache_read_tok
+            cache_read_tok = _openai_cached_read_tokens(chunk.usage) or cache_read_tok
 
     tool_calls = []
     for idx in sorted(tool_buf):
