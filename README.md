@@ -39,11 +39,6 @@ cheetahclaws        # start chatting!
 
 Other install methods: [pip install](#alternative-install-with-pip) | [uv install](#alternative-install-with-uv) | [run from source](#alternative-run-directly-from-source-no-install) | [full details](#installation)
 
-
- 
-
-
- 
 ## 🔥🔥🔥 News (Pacific Time)
 
  
